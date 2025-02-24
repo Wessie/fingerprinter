@@ -36,7 +36,7 @@ func (m Matcher) Find(audioSamples []float64, audioDuration time.Duration, sampl
 	peaks := ExtractPeaks(spectrogram, audioDuration)
 	fingerprints := Fingerprint(peaks, 0)
 
-	addresses := make([]uint32, 0, len(fingerprints))
+	addresses := make([]storage.Address, 0, len(fingerprints))
 	for address := range fingerprints {
 		addresses = append(addresses, address)
 	}
@@ -47,7 +47,7 @@ func (m Matcher) Find(audioSamples []float64, audioDuration time.Duration, sampl
 	}
 
 	matches := map[uint32][][2]uint32{} // songID -> [(sampleTime, dbTime)]
-	timestamps := map[uint32][]uint32{}
+	timestamps := map[uint32][]uint32{} // songID -> [dbTime, dbTime, dbTime, ...]
 
 	for address, couples := range matchCouples {
 		for _, couple := range couples {

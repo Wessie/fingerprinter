@@ -3,17 +3,19 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"strings"
+	"iter"
 
-	radio "github.com/R-a-dio/valkyrie"
-	"github.com/mattn/go-sqlite3"
+	"github.com/jmoiron/sqlx"
+	_ "modernc.org/sqlite"
 )
 
 type Storage interface {
-	StoreFingerprints(fp map[uint32]Couple)
-	GetCouples([]uint32) (map[uint32][]Couple, error)
+	StoreFingerprints(fp iter.Seq2[Address, Couple]) error
+	GetCouples([]Address) (map[Address][]Couple, error)
 	GetSongByID(uint32) (Song, bool, error)
 }
+
+type Address uint32
 
 type Couple struct {
 	AnchorTimeMs uint32
@@ -21,11 +23,11 @@ type Couple struct {
 }
 
 type SQLiteClient struct {
-	db *sql.DB
+	db *sqlx.DB
 }
 
 func NewSQLiteClient(dataSourceName string) (*SQLiteClient, error) {
-	db, err := sql.Open("sqlite3", dataSourceName)
+	db, err := sqlx.Open("sqlite", dataSourceName)
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to SQLite: %s", err)
 	}
@@ -39,7 +41,7 @@ func NewSQLiteClient(dataSourceName string) (*SQLiteClient, error) {
 }
 
 // createTables creates the required tables if they don't exist
-func createTables(db *sql.DB) error {
+func createTables(db *sqlx.DB) error {
 	createSongsTable := `
     CREATE TABLE IF NOT EXISTS songs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,31 +81,25 @@ func (db *SQLiteClient) Close() error {
 	return nil
 }
 
-func (db *SQLiteClient) StoreFingerprints(fingerprints map[uint32]Couple) error {
-	tx, err := db.db.Begin()
+func (db *SQLiteClient) StoreFingerprints(fingerprints iter.Seq2[Address, Couple]) error {
+	tx, err := db.db.Beginx()
 	if err != nil {
 		return fmt.Errorf("error starting transaction: %s", err)
 	}
+	defer tx.Rollback()
 
-	stmt, err := tx.Prepare("INSERT OR REPLACE INTO fingerprints (address, anchorTimeMs, songID) VALUES (?, ?, ?)")
-	if err != nil {
-		tx.Rollback()
-		return fmt.Errorf("error preparing statement: %s", err)
-	}
-	defer stmt.Close()
-
+	query := `INSERT OR REPLACE INTO fingerprints (address, anchorTimeMs, songID) VALUES (?, ?, ?)`
 	for address, couple := range fingerprints {
-		if _, err := stmt.Exec(address, couple.AnchorTimeMs, couple.SongID); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("error executing statement: %s", err)
+		if _, err := tx.Exec(query, address, couple.AnchorTimeMs, couple.SongID); err != nil {
+			return fmt.Errorf("error executing statement: %w", err)
 		}
 	}
 
 	return tx.Commit()
 }
 
-func (db *SQLiteClient) GetCouples(addresses []uint32) (map[uint32][]Couple, error) {
-	couples := make(map[uint32][]Couple)
+func (db *SQLiteClient) GetCouples(addresses []Address) (map[Address][]Couple, error) {
+	couples := make(map[Address][]Couple)
 
 	for _, address := range addresses {
 		rows, err := db.db.Query("SELECT anchorTimeMs, songID FROM fingerprints WHERE address = ?", address)
@@ -126,52 +122,12 @@ func (db *SQLiteClient) GetCouples(addresses []uint32) (map[uint32][]Couple, err
 	return couples, nil
 }
 
-func (db *SQLiteClient) TotalSongs() (int, error) {
-	var count int
-	err := db.db.QueryRow("SELECT COUNT(*) FROM songs").Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("error counting songs: %s", err)
-	}
-	return count, nil
-}
-
-func (db *SQLiteClient) RegisterSong(songTitle, songArtist, ytID string) (uint32, error) {
-	tx, err := db.db.Begin()
-	if err != nil {
-		return 0, fmt.Errorf("error starting transaction: %s", err)
-	}
-
-	stmt, err := tx.Prepare("INSERT INTO songs (id, title, artist, ytID, key) VALUES (0, ?, ?, ?, ?)")
-	if err != nil {
-		tx.Rollback()
-		return 0, fmt.Errorf("error preparing statement: %s", err)
-	}
-	defer stmt.Close()
-
-	songKey := radio.NewSongHash(radio.Metadata(songArtist, songTitle)).String()
-	if _, err := stmt.Exec(songTitle, songArtist, ytID, songKey); err != nil {
-		tx.Rollback()
-		if sqliteErr, ok := err.(sqlite3.Error); ok && sqliteErr.Code == sqlite3.ErrConstraint {
-			return 0, fmt.Errorf("song with ytID or key already exists: %v", err)
-		}
-		return 0, fmt.Errorf("failed to register song: %v", err)
-	}
-
-	return 0, tx.Commit()
-}
-
-var sqlitefilterKeys = "id | ytID | key"
-
 // GetSong retrieves a song by filter key
-func (s *SQLiteClient) GetSong(filterKey string, value interface{}) (Song, bool, error) {
+func (s *SQLiteClient) GetSongByID(songId uint32) (Song, bool, error) {
 
-	if !strings.Contains(sqlitefilterKeys, filterKey) {
-		return Song{}, false, fmt.Errorf("invalid filter key")
-	}
+	query := "SELECT title, artist, ytID FROM songs WHERE id = ?"
 
-	query := fmt.Sprintf("SELECT title, artist, ytID FROM songs WHERE %s = ?", filterKey)
-
-	row := s.db.QueryRow(query, value)
+	row := s.db.QueryRow(query, songId)
 
 	var song Song
 	err := row.Scan(&song.Title, &song.Artist, &song.YouTubeID)
@@ -183,36 +139,6 @@ func (s *SQLiteClient) GetSong(filterKey string, value interface{}) (Song, bool,
 	}
 
 	return song, true, nil
-}
-
-func (db *SQLiteClient) GetSongByID(songID uint32) (Song, bool, error) {
-	return db.GetSong("id", songID)
-}
-
-func (db *SQLiteClient) GetSongByYTID(ytID string) (Song, bool, error) {
-	return db.GetSong("ytID", ytID)
-}
-
-func (db *SQLiteClient) GetSongByKey(key string) (Song, bool, error) {
-	return db.GetSong("key", key)
-}
-
-// DeleteSongByID deletes a song by ID
-func (db *SQLiteClient) DeleteSongByID(songID uint32) error {
-	_, err := db.db.Exec("DELETE FROM songs WHERE id = ?", songID)
-	if err != nil {
-		return fmt.Errorf("failed to delete song: %v", err)
-	}
-	return nil
-}
-
-// DeleteCollection deletes a collection (table) from the database
-func (db *SQLiteClient) DeleteCollection(collectionName string) error {
-	_, err := db.db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", collectionName))
-	if err != nil {
-		return fmt.Errorf("error deleting collection: %v", err)
-	}
-	return nil
 }
 
 type Song struct {

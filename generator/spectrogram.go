@@ -71,10 +71,7 @@ func Downsample(input []float64, originalSampleRate, targetSampleRate int) ([]fl
 
 	var resampled []float64
 	for i := 0; i < len(input); i += ratio {
-		end := i + ratio
-		if end > len(input) {
-			end = len(input)
-		}
+		end := min(i+ratio, len(input))
 
 		sum := 0.0
 		for j := i; j < end; j++ {

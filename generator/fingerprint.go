@@ -1,6 +1,12 @@
 package generator
 
-import "github.com/Wessie/fingerprinter/storage"
+import (
+	"iter"
+
+	"maps"
+
+	"github.com/Wessie/fingerprinter/storage"
+)
 
 const (
 	maxFreqBits    = 9
@@ -12,34 +18,43 @@ const (
 // The fingerprints are encoded using a 32-bit integer format and stored in an array.
 // Each fingerprint consists of an address and a couple.
 // The address is a hash. The couple contains the anchor time and the song ID.
-func Fingerprint(peaks []Peak, songID uint32) map[uint32]storage.Couple {
-	fingerprints := map[uint32]storage.Couple{}
-
-	for i, anchor := range peaks {
-		for j := i + 1; j < len(peaks) && j <= i+targetZoneSize; j++ {
-			target := peaks[j]
-
-			address := createAddress(anchor, target)
-			anchorTimeMs := uint32(anchor.Time * 1000)
-
-			fingerprints[address] = storage.Couple{anchorTimeMs, songID}
-		}
-	}
+func Fingerprint(peaks []Peak, songID uint32) map[storage.Address]storage.Couple {
+	fingerprints := maps.Collect(FingerprintIter(peaks, songID))
 
 	return fingerprints
+}
+
+func FingerprintIter(peaks []Peak, songID uint32) iter.Seq2[storage.Address, storage.Couple] {
+	return func(yield func(storage.Address, storage.Couple) bool) {
+		for i, anchor := range peaks {
+			for j := i + 1; j < len(peaks) && j <= i+targetZoneSize; j++ {
+				target := peaks[j]
+
+				address := createAddress(anchor, target)
+				anchorTimeMs := uint32(anchor.Time * 1000)
+
+				if !yield(address, storage.Couple{
+					AnchorTimeMs: anchorTimeMs,
+					SongID:       songID,
+				}) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // createAddress generates a unique address for a pair of anchor and target points.
 // The address is a 32-bit integer where certain bits represent the frequency of
 // the anchor and target points, and other bits represent the time difference (delta time)
 // between them. This function combines these components into a single address (a hash).
-func createAddress(anchor, target Peak) uint32 {
+func createAddress(anchor, target Peak) storage.Address {
 	anchorFreq := int(real(anchor.Freq))
 	targetFreq := int(real(target.Freq))
 	deltaMs := uint32((target.Time - anchor.Time) * 1000)
 
 	// Combine the frequency of the anchor, target, and delta time into a 32-bit address
-	address := uint32(anchorFreq<<23) | uint32(targetFreq<<14) | deltaMs
+	address := storage.Address(uint32(anchorFreq<<23) | uint32(targetFreq<<14) | deltaMs)
 
 	return address
 }

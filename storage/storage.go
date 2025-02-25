@@ -2,17 +2,20 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
-	"iter"
+	"sync"
 
 	"github.com/jmoiron/sqlx"
+	"modernc.org/sqlite"
 	_ "modernc.org/sqlite"
 )
 
 type Storage interface {
-	StoreFingerprints(fp iter.Seq2[Address, Couple]) error
+	StoreFingerprints(fp map[Address]Couple) error
 	GetCouples([]Address) (map[Address][]Couple, error)
 	GetSongByID(uint32) (Song, bool, error)
+	RegisterSong(key string, metadata string) (uint32, error)
 }
 
 type Address uint32
@@ -24,6 +27,7 @@ type Couple struct {
 
 type SQLiteClient struct {
 	db *sqlx.DB
+	mu sync.RWMutex
 }
 
 func NewSQLiteClient(dataSourceName string) (*SQLiteClient, error) {
@@ -44,11 +48,9 @@ func NewSQLiteClient(dataSourceName string) (*SQLiteClient, error) {
 func createTables(db *sqlx.DB) error {
 	createSongsTable := `
     CREATE TABLE IF NOT EXISTS songs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        artist TEXT NOT NULL,
-        ytID TEXT UNIQUE,
-        key TEXT NOT NULL UNIQUE
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		song TEXT NOT NULL,
+		key TEXT NOT NULL UNIQUE
     );
     `
 
@@ -81,7 +83,10 @@ func (db *SQLiteClient) Close() error {
 	return nil
 }
 
-func (db *SQLiteClient) StoreFingerprints(fingerprints iter.Seq2[Address, Couple]) error {
+func (db *SQLiteClient) StoreFingerprints(fingerprints map[Address]Couple) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	tx, err := db.db.Beginx()
 	if err != nil {
 		return fmt.Errorf("error starting transaction: %s", err)
@@ -90,6 +95,7 @@ func (db *SQLiteClient) StoreFingerprints(fingerprints iter.Seq2[Address, Couple
 
 	query := `INSERT OR REPLACE INTO fingerprints (address, anchorTimeMs, songID) VALUES (?, ?, ?)`
 	for address, couple := range fingerprints {
+		//fmt.Println(address, couple.AnchorTimeMs, couple.SongID)
 		if _, err := tx.Exec(query, address, couple.AnchorTimeMs, couple.SongID); err != nil {
 			return fmt.Errorf("error executing statement: %w", err)
 		}
@@ -99,6 +105,9 @@ func (db *SQLiteClient) StoreFingerprints(fingerprints iter.Seq2[Address, Couple
 }
 
 func (db *SQLiteClient) GetCouples(addresses []Address) (map[Address][]Couple, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	couples := make(map[Address][]Couple)
 
 	for _, address := range addresses {
@@ -122,15 +131,44 @@ func (db *SQLiteClient) GetCouples(addresses []Address) (map[Address][]Couple, e
 	return couples, nil
 }
 
+func (db *SQLiteClient) RegisterSong(key string, metadata string) (uint32, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	tx, err := db.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("error starting transaction: %s", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec("INSERT INTO songs (song, key) VALUES (?, ?);", metadata, key)
+	if err != nil {
+		var sqlerr *sqlite.Error
+		if errors.As(err, &sqlerr) && (sqlerr.Code() == 2067 || sqlerr.Code() == 1555) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("error executing statement: %w", err)
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("error getting last insert id: %w", err)
+	}
+
+	return uint32(id), tx.Commit()
+}
+
 // GetSong retrieves a song by filter key
 func (s *SQLiteClient) GetSongByID(songId uint32) (Song, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	query := "SELECT title, artist, ytID FROM songs WHERE id = ?"
+	query := "SELECT id, song, key FROM songs WHERE id = ?"
 
 	row := s.db.QueryRow(query, songId)
 
 	var song Song
-	err := row.Scan(&song.Title, &song.Artist, &song.YouTubeID)
+	err := row.Scan(&song.ID, &song.Metadata, &song.Key)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return Song{}, false, nil
@@ -142,7 +180,7 @@ func (s *SQLiteClient) GetSongByID(songId uint32) (Song, bool, error) {
 }
 
 type Song struct {
-	Title     string
-	Artist    string
-	YouTubeID string
+	ID       uint32
+	Key      string
+	Metadata string
 }

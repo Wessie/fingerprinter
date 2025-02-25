@@ -2,8 +2,7 @@ package generator
 
 import (
 	"iter"
-
-	"maps"
+	"log"
 
 	"github.com/Wessie/fingerprinter/storage"
 )
@@ -18,8 +17,25 @@ const (
 // The fingerprints are encoded using a 32-bit integer format and stored in an array.
 // Each fingerprint consists of an address and a couple.
 // The address is a hash. The couple contains the anchor time and the song ID.
-func Fingerprint(peaks []Peak, songID uint32) map[storage.Address]storage.Couple {
-	fingerprints := maps.Collect(FingerprintIter(peaks, songID))
+func Fingerprint(peaks []Peak, songID uint32) map[storage.Address][]storage.Couple {
+	fingerprints := map[storage.Address][]storage.Couple{}
+
+	var dupes int
+	for i, anchor := range peaks {
+		for j := i + 1; j < len(peaks) && j <= i+targetZoneSize; j++ {
+			target := peaks[j]
+
+			address := createAddress(anchor, target)
+			anchorTimeMs := uint32(anchor.Time * 1000)
+
+			if _, ok := fingerprints[address]; ok {
+				log.Println(fingerprints[address], anchorTimeMs)
+				dupes++
+			}
+			fingerprints[address] = append(fingerprints[address], storage.Couple{anchorTimeMs, songID})
+			//fingerprints[address] = storage.Couple{anchorTimeMs, songID}
+		}
+	}
 
 	return fingerprints
 }
@@ -49,12 +65,12 @@ func FingerprintIter(peaks []Peak, songID uint32) iter.Seq2[storage.Address, sto
 // the anchor and target points, and other bits represent the time difference (delta time)
 // between them. This function combines these components into a single address (a hash).
 func createAddress(anchor, target Peak) storage.Address {
-	anchorFreq := int(real(anchor.Freq))
-	targetFreq := int(real(target.Freq))
-	deltaMs := uint32((target.Time - anchor.Time) * 1000)
+	anchorFreq := int32(real(anchor.Freq))
+	targetFreq := int32(real(target.Freq))
+	deltaMs := storage.Address((target.Time - anchor.Time) * 1000)
 
 	// Combine the frequency of the anchor, target, and delta time into a 32-bit address
-	address := storage.Address(uint32(anchorFreq<<23) | uint32(targetFreq<<14) | deltaMs)
+	address := storage.Address(anchorFreq<<23) | storage.Address(targetFreq<<14) | deltaMs
 
 	return address
 }

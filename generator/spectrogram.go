@@ -36,10 +36,7 @@ func Spectrogram(samples []float64, sampleRate int) ([][]complex128, error) {
 	// Perform STFT
 	for i := 0; i < numOfWindows; i++ {
 		start := i * hopSize
-		end := start + freqBinSize
-		if end > len(downsampledSamples) {
-			end = len(downsampledSamples)
-		}
+		end := min(start+freqBinSize, len(downsampledSamples))
 
 		bin := make([]float64, freqBinSize)
 		copy(bin, downsampledSamples[start:end])

@@ -4,7 +4,11 @@ go 1.24.0
 
 require (
 	github.com/R-a-dio/valkyrie v0.0.0-20250224090429-d2401b305f66
+	github.com/drgolem/go-mpg123 v0.0.0-20240611091502-c7d0d87d2db7
+	github.com/jfreymuth/pulse v0.1.1
 	github.com/jmoiron/sqlx v1.4.0
+	github.com/rs/zerolog v1.33.0
+	golang.org/x/sync v0.10.0
 	modernc.org/sqlite v1.35.0
 )
 
@@ -24,7 +28,6 @@ require (
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rs/xid v1.6.0 // indirect
-	github.com/rs/zerolog v1.33.0 // indirect
 	github.com/spf13/afero v1.11.0 // indirect
 	github.com/tcolgate/mp3 v0.0.0-20170426193717-e79c5a46d300 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect

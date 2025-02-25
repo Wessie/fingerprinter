@@ -2,15 +2,10 @@ package generator
 
 import (
 	"encoding/binary"
-	"errors"
 )
 
 // S16LEToF64 converts a slice of bytes from a s16le format to f64le format
-func S16LEToF64LE(input []byte) ([]float64, error) {
-	if len(input)%2 != 0 {
-		return nil, errors.New("invalid input length")
-	}
-
+func S16LEToF64LE(input []byte) []float64 {
 	numSamples := len(input) / 2
 	output := make([]float64, numSamples)
 
@@ -22,5 +17,5 @@ func S16LEToF64LE(input []byte) ([]float64, error) {
 		output[i/2] = float64(sample) / 32768.0
 	}
 
-	return output, nil
+	return output
 }

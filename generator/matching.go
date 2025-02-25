@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand/v2"
 	"slices"
 	"time"
 
@@ -12,16 +13,23 @@ import (
 )
 
 type Match struct {
-	SongID     uint32
-	SongTitle  string
-	SongArtist string
-	YouTubeID  string
-	Timestamp  uint32
-	Score      float64
+	SongID    uint32
+	SongKey   string
+	Metadata  string
+	Timestamp uint32
+	Score     float64
+}
+
+func NewMatcher(db storage.Storage) *Matcher {
+	return &Matcher{db}
 }
 
 type Matcher struct {
 	db storage.Storage
+}
+
+func randomID() uint32 {
+	return rand.Uint32()
 }
 
 // FindMatches processes the audio samples and finds matches in the database
@@ -33,8 +41,13 @@ func (m Matcher) Find(audioSamples []float64, audioDuration time.Duration, sampl
 		return nil, time.Since(startTime), fmt.Errorf("failed to get spectrogram of samples: %v", err)
 	}
 
+	log.Println("spec:", len(spectrogram), len(audioSamples)/44100, audioDuration)
+
 	peaks := ExtractPeaks(spectrogram, audioDuration)
-	fingerprints := Fingerprint(peaks, 0)
+	log.Println("peaks:", len(peaks))
+	fingerprints := Fingerprint(peaks, randomID())
+
+	log.Println("fp:", len(fingerprints))
 
 	addresses := make([]storage.Address, 0, len(fingerprints))
 	for address := range fingerprints {
@@ -72,12 +85,12 @@ func (m Matcher) Find(audioSamples []float64, audioDuration time.Duration, sampl
 
 		slices.Sort(timestamps[songID])
 
-		match := Match{songID, song.Title, song.Artist, song.YouTubeID, timestamps[songID][0], points}
+		match := Match{songID, song.Key, song.Metadata, timestamps[songID][0], points}
 		matchList = append(matchList, match)
 	}
 
 	slices.SortFunc(matchList, func(i, j Match) int {
-		return cmp.Compare(i.Score, j.Score)
+		return cmp.Compare(j.Score, i.Score)
 	})
 
 	return matchList, time.Since(startTime), nil
